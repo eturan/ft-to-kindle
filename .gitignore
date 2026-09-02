@@ -1,0 +1,4 @@
+*.epub
+ft-cookies.txt
+*cookies*.txt
+__pycache__/
