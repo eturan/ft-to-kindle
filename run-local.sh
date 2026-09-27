@@ -1,5 +1,6 @@
 #!/bin/bash
-# Fetch myFT and email it to the Kindle. Run by launchd (see launchd/).
+# Fetch myFT and send it to the Kindle. Run by launchd (macOS, see launchd/)
+# or a systemd user timer (Linux, see systemd/).
 # Config lives in ~/.config/ft-to-kindle/env (not in the repo).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,7 +35,10 @@ trap 'rm -f "$OUT"' EXIT
 # start fetching (and burn the day's launchd slot) until ft.com:443 accepts
 # a TCP connection, up to ~4 minutes.
 for _ in $(seq 1 24); do
-    if nc -z -G 5 www.ft.com 443 >/dev/null 2>&1; then
+    # macOS nc takes a connect timeout via -G; openbsd-netcat on Linux
+    # has no -G and uses -w instead.
+    if [[ "$(uname)" == Darwin ]]; then nc_timeout=(-G 5); else nc_timeout=(-w 5); fi
+    if nc -z "${nc_timeout[@]}" www.ft.com 443 >/dev/null 2>&1; then
         break
     fi
     echo "$(date) waiting for network..."

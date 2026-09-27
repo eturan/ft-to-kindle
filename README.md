@@ -119,6 +119,35 @@ tail -f ~/Library/Logs/ft-to-kindle.log
 # "sending to kindle..." → "sent ... to <device>" → "done"
 ```
 
+## Setting up on Linux (systemd)
+
+Same steps as the Mac runbook, with these substitutions:
+
+- **Step 0**: install calibre and an OpenSSL 3.x python from the distro
+  (Arch: `sudo pacman -S calibre python openbsd-netcat`). Set
+  `FT_FETCH_PYTHON=/usr/bin/python3` in the env file.
+- **Steps 1–3**: identical (`python3 -m venv` works as written).
+- **Step 4**: install the systemd user timer instead of launchd:
+
+```sh
+mkdir -p ~/.config/systemd/user
+sed -e "s|__FT2K_DIR__|$(pwd)|" systemd/ft-to-kindle.service \
+    > ~/.config/systemd/user/ft-to-kindle.service
+cp systemd/ft-to-kindle.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ft-to-kindle.timer
+loginctl enable-linger "$USER"     # run even when not logged in
+```
+
+- **Step 5**: `systemctl --user start ft-to-kindle.service` for a run now,
+  then `tail -f ~/.local/state/ft-to-kindle/ft-to-kindle.log`.
+
+`systemd-inhibit` in the service stands in for `caffeinate`, and
+`Persistent=true` in the timer runs a missed slot at resume or boot. To
+force a re-send today, delete the stamp and `systemctl --user start
+ft-to-kindle.service`. Check the schedule with `systemctl --user
+list-timers ft-to-kindle.timer`.
+
 ## Operations
 
 - **Log**: `~/Library/Logs/ft-to-kindle.log`
@@ -128,7 +157,7 @@ tail -f ~/Library/Logs/ft-to-kindle.log
 - **Manual one-off send**:
   `~/.config/ft-to-kindle/stk-venv/bin/python recipes/stk_send.py send
   file.epub --title '...' --device <serial>`
-- **Schedule**: hourly slots 07:00–12:00 in
+- **Schedule**: hourly slots 07:00–12:00 (Linux timer: 08:00–12:00) in
   `launchd/local.ft-to-kindle.plist`; first slot that succeeds wins.
   After editing the plist: re-run the `sed` install line, then
   `launchctl bootout gui/$(id -u)/local.ft-to-kindle` and `bootstrap` it

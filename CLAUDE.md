@@ -1,7 +1,7 @@
 # ft-to-kindle — agent notes
 
 Delivers a personal myFT feed to a Kindle daily, locally via launchd on a
-Mac. **README.md is the canonical doc** — it has the full new-machine
+Mac or a systemd user timer on Linux (`systemd/`). **README.md is the canonical doc** — it has the full new-machine
 runbook ("Setting up on a new Mac") and a troubleshooting table. Read it
 before changing anything.
 

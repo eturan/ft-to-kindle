@@ -1,0 +1,14 @@
+# Hourly attempts 08:00-12:00 local time. A slot
+# that fails is retried at the next one; the stamp file in run-local.sh
+# keeps delivery to once per day.
+[Unit]
+Description=Daily myFT to Kindle (08:00, hourly retries until 12:00)
+
+[Timer]
+OnCalendar=*-*-* 08..12:00:00
+# Run once at wake/boot if a slot was missed while suspended or off
+# (launchd's coalesced catch-up + RunAtLoad).
+Persistent=true
+
+[Install]
+WantedBy=timers.target
