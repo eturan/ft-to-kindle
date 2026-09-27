@@ -1,206 +1,148 @@
 # FT to Kindle
 
-Daily delivery of your personal **myFT** feed (the topics, companies, and
-columnists you follow on ft.com) to your Kindle. Runs **locally on a Mac
-via launchd** — every morning it fetches the day's articles, builds an
-EPUB with calibre, and pushes it to your Kindle over Amazon's Send to
-Kindle service (HTTPS).
+Your personal **myFT** feed — the topics, companies and columnists you
+follow on ft.com — delivered to your Kindle every morning as an e-book.
+
+Runs on your own Mac or Linux machine: each morning it fetches the day's
+articles, builds an EPUB with calibre, and pushes it to your Kindle over
+Amazon's Send to Kindle service. Nothing leaves your computer except the
+finished e-book going to Amazon.
 
 > **You need your own FT subscription.** This tool reads FT with *your*
-> login (session cookies), from *your* home connection, for *your*
-> personal reading — the same articles you could read in the browser,
-> reformatted for an e-reader. It is for personal use only: don't use it
-> to redistribute FT content or to read without a subscription.
+> login, from *your* connection, for *your* personal reading — the same
+> articles you could read in the browser, reformatted for an e-reader.
+> Don't use it to redistribute FT content or to read without a subscription.
 
-```
-launchd (07:00, retries hourly until 12:00, caffeinate keeps Mac awake)
-  └─ run-local.sh
-       ├─ wait for network (nc to ft.com:443)
-       ├─ ebook-convert recipes/myft.recipe  → EPUB
-       │    └─ per-article fetch via recipes/ft_fetch.py
-       │       (OpenSSL 3.x python + session cookies; FT 403s other TLS stacks)
-       └─ recipes/stk_send.py send            → Kindle, over HTTPS
-            (fallback: calibre-smtp email, only if stk isn't registered)
-```
+## Install
 
-## Why it works this way (read before "simplifying")
-
-Each of these was a real failure in production; don't undo them without
-re-testing:
-
-1. **No cloud runners.** FT's bot protection returns HTTP 403 ("Security
-   Verification") for article pages fetched from datacenter IPs (GitHub
-   Actions, Railway, …) regardless of login. Fetching needs a
-   **residential IP** — a Mac or a small home device. (An earlier
-   GitHub-Actions version of this project "worked" — it mailed a 37KB
-   *empty* paper every morning because every article came back 403.)
-2. **Fetch goes through `ft_fetch.py` with a specific python.** FT also
-   filters on TLS fingerprint: calibre's bundled OpenSSL, macOS LibreSSL,
-   and curl all get 403; an OpenSSL 3.x python (Homebrew python3) is
-   served normally. The helper also keeps session cookies across the
-   per-article subprocess calls — cookie-less request bursts get blocked.
-3. **`caffeinate -is` + hourly retry slots in the launchd plist.** An
-   early-morning slot usually fires during a ~1-minute DarkWake; without
-   a sleep assertion the Mac re-sleeps mid-run and TLS handshakes time
-   out. Retries at 08:00–12:00 cover a slot that still misses; the stamp
-   file keeps delivery to once/day.
-4. **Send is HTTPS (Send to Kindle), not SMTP.** Some corporate/managed
-   networks block outbound SMTP (ports 25/465/587) to personal mail
-   providers. `recipes/stk_send.py` uses the
-   [`stkclient`](https://pypi.org/project/stkclient/) library — Amazon
-   OAuth once, then token sends over 443. calibre-smtp remains only as a
-   fallback for machines where SMTP works and stk isn't registered.
-5. **Registration uses a unique per-machine device serial.** Stock
-   stkclient 0.1.1 hardcodes one serial for every install worldwide, so
-   any other user's registration invalidates yours within hours
-   (403 `"Failed to validate DeviceInfoToken"`; upstream
-   [PR #199](https://github.com/maxdjohnson/stkclient/pull/199), closed
-   unmerged). `stk_send.py` registers a serial derived from your
-   user@host instead.
-
-## Setting up on a new Mac (agent runbook)
-
-Prereqs: an FT subscription, an Amazon account with the target Kindle,
-Homebrew.
+**macOS (Homebrew)**
 
 ```sh
-# 0. Clone and install tools
-git clone https://github.com/eturan/ft-to-kindle
-cd ft-to-kindle
-brew install --cask calibre        # provides ebook-convert, calibre-smtp
-brew install python3               # OpenSSL 3.x python for ft_fetch.py
-
-# 1. Config file (values live outside the repo)
-mkdir -p ~/.config/ft-to-kindle
-cp env.example ~/.config/ft-to-kindle/env
-chmod 600 ~/.config/ft-to-kindle/env
-$EDITOR ~/.config/ft-to-kindle/env   # fill in each value; comments explain
+brew install eturan/tap/ft-to-kindle
+ft2k setup
 ```
 
-- `MYFT_RSS_URL`: on ft.com open **myFT → Following** and copy the RSS
-  URL. It embeds a personal ID and works without login — treat it like a
-  password.
-- `FT_FETCH_PYTHON`: any python linked against OpenSSL 3.x
-  (`python3 -c 'import ssl; print(ssl.OPENSSL_VERSION)'` must say
-  OpenSSL 3.x, not LibreSSL).
+**Linux / any OS with [uv](https://docs.astral.sh/uv/)**
 
 ```sh
-# 2. FT subscription cookies (full articles; without them premium
-#    articles come through as paywall teasers)
-# FT's login page has a CAPTCHA, so export cookies from a browser where
-# you're logged in to ft.com — e.g. the "Get cookies.txt LOCALLY"
-# extension, Netscape cookies.txt format:
-#   save as ~/.config/ft-to-kindle/ft-cookies.txt && chmod 600 it
-# This file IS your FT login. Refresh it when a run drops to teasers only.
-
-# 3. Send to Kindle registration (one-time, interactive)
-python3 -m venv ~/.config/ft-to-kindle/stk-venv
-~/.config/ft-to-kindle/stk-venv/bin/pip install stkclient
-STK=~/.config/ft-to-kindle/stk-venv/bin/python
-$STK recipes/stk_send.py login-url     # prints an Amazon sign-in URL
-# → open it, sign in, copy the URL of the landing page
-#   (contains openid.oa2.authorization_code=...)
-$STK recipes/stk_send.py register '<that full URL, single-quoted>'
-$STK recipes/stk_send.py devices       # lists Kindles + serials
-# → put the target Kindle's serial in KINDLE_DEVICE_SERIAL in the env
-#   file (use the SERIAL — name substrings also match the phone/Mac
-#   reading apps)
-
-# 4. Install the launchd agent (fills in the repo path + home dir)
-sed -e "s|__FT2K_DIR__|$(pwd)|" -e "s|__FT2K_HOME__|$HOME|" \
-    launchd/local.ft-to-kindle.plist \
-    > ~/Library/LaunchAgents/local.ft-to-kindle.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.ft-to-kindle.plist
-# (bootstrap also fires a run immediately via RunAtLoad)
-
-# 5. Verify end-to-end
-tail -f ~/Library/Logs/ft-to-kindle.log
-# success looks like: "fetching myFT..." → per-article download lines →
-# "sending to kindle..." → "sent ... to <device>" → "done"
+uv tool install ft-to-kindle          # or: pipx install ft-to-kindle
+ft2k setup
 ```
 
-## Setting up on Linux (systemd)
+You also need [calibre](https://calibre-ebook.com) (`brew install --cask
+calibre`, `sudo pacman -S calibre`, `sudo apt install calibre`…). The
+Homebrew formula installs it for you; on Linux `setup` tells you the
+command.
 
-Same steps as the Mac runbook, with these substitutions:
+## Setup
 
-- **Step 0**: install calibre and an OpenSSL 3.x python from the distro
-  (Arch: `sudo pacman -S calibre python openbsd-netcat`). Set
-  `FT_FETCH_PYTHON=/usr/bin/python3` in the env file.
-- **Steps 1–3**: identical (`python3 -m venv` works as written).
-- **Step 4**: install the systemd user timer instead of launchd:
+`ft2k setup` walks you through everything, checking each step as it goes.
+It takes about three minutes:
 
-```sh
-mkdir -p ~/.config/systemd/user
-sed -e "s|__FT2K_DIR__|$(pwd)|" systemd/ft-to-kindle.service \
-    > ~/.config/systemd/user/ft-to-kindle.service
-cp systemd/ft-to-kindle.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now ft-to-kindle.timer
-loginctl enable-linger "$USER"     # run even when not logged in
+1. **Tools** — finds calibre (offers to install it on a Mac).
+2. **Your myFT feed** — paste the RSS link from *myFT → Following* on
+   ft.com; it confirms how many articles it sees.
+3. **Your ft.com login** — you just need to be signed in to ft.com in a
+   browser on this computer (Chrome, Firefox, Safari, Brave, Edge, Arc…).
+   The login is re-read every morning, so it never goes stale.
+4. **Amazon** — opens the Amazon sign-in page; paste back the address you
+   land on. Then pick your Kindle from a numbered list.
+5. **Schedule** — installs a daily job (launchd on macOS, a systemd user
+   timer on Linux) and offers to send a test edition right away.
+
+Re-run `ft2k setup` any time; it keeps what already works.
+
+## Day to day
+
+```
+ft2k status        schedule, last delivery, recent log lines
+ft2k doctor        check every part of the setup and say what's wrong
+ft2k run --force   send today's edition now (even if one already went)
+ft2k log -f        follow the log
+ft2k devices       Kindles on your Amazon account
+ft2k send FILE     send any EPUB/PDF to your Kindle
+ft2k config        show settings; --set KEY=VALUE to change one
+ft2k uninstall     remove the schedule (--purge also removes credentials)
 ```
 
-- **Step 5**: `systemctl --user start ft-to-kindle.service` for a run now,
-  then `tail -f ~/.local/state/ft-to-kindle/ft-to-kindle.log`.
-
-`systemd-inhibit` in the service stands in for `caffeinate`, and
-`Persistent=true` in the timer runs a missed slot at resume or boot. To
-force a re-send today, delete the stamp and `systemctl --user start
-ft-to-kindle.service`. Check the schedule with `systemctl --user
-list-timers ft-to-kindle.timer`.
-
-## Operations
-
-- **Log**: `~/Library/Logs/ft-to-kindle.log`
-- **Once-per-day stamp**: `~/.local/state/ft-to-kindle/last-sent` holds
-  the date last delivered. Delete it + `launchctl kickstart
-  gui/$(id -u)/local.ft-to-kindle` to force a re-send today.
-- **Manual one-off send**:
-  `~/.config/ft-to-kindle/stk-venv/bin/python recipes/stk_send.py send
-  file.epub --title '...' --device <serial>`
-- **Schedule**: hourly slots 07:00–12:00 (Linux timer: 08:00–12:00) in
-  `launchd/local.ft-to-kindle.plist`; first slot that succeeds wins.
-  After editing the plist: re-run the `sed` install line, then
-  `launchctl bootout gui/$(id -u)/local.ft-to-kindle` and `bootstrap` it
-  again.
-- **Article window**: `recipes/myft.recipe` takes ~28h of articles
-  (`oldest_article = 1.15` days), max 50 per day.
+Delivery is attempted at 07:00 and retried hourly until 12:00, so a
+laptop that was asleep or offline at 07:00 still gets its paper. Only one
+edition is sent per day.
 
 ## Troubleshooting
 
-| Symptom | Likely cause / fix |
-| --- | --- |
-| Empty/thin paper, log full of 403s | Running from a datacenter IP, or FT session cookies expired (re-export `ft-cookies.txt`), or wrong `FT_FETCH_PYTHON` (must be OpenSSL 3.x). |
-| `No articles found, aborting` + TLS handshake timeouts | No usable network when the run fired (Mac in DarkWake). Should self-heal at the next hourly slot; check the plist still wraps the job in `caffeinate -is`. |
-| Built the EPUB but send times out | If using the SMTP fallback: outbound SMTP is blocked on your network (common on corporate-managed machines) — do the `stk_send.py` registration instead. |
-| `stk-client.json not found` | One-time registration not done on this machine (setup step 3). |
-| Send fails: `403 ... "Failed to validate DeviceInfoToken"` | Amazon invalidated the registration — redo setup step 3 (login-url/register). Rare with this repo's per-machine serial; see "Why it works this way" #5. |
-| Paper arrives on phone/iPad apps too | `KINDLE_DEVICE_SERIAL` isn't set to the exact serial in the env file. |
-| Nothing ran at all | `launchctl list \| grep ft-to-kindle`; re-bootstrap the plist. Also check `~/.config/ft-to-kindle/env` exists — the script exits early without it. |
+Run `ft2k doctor` first — it checks each piece and prints what to do.
 
-## Secrets inventory (never commit these)
+- **Edition is thin or articles are teasers** — your ft.com login wasn't
+  found. Sign in to ft.com in your browser (any profile) and run `ft2k
+  doctor`. If you use a browser ft2k can't read, export a `cookies.txt`
+  and choose option 2 in `ft2k setup`.
+- **"Failed to validate DeviceInfoToken"** — Amazon invalidated the
+  connection; run `ft2k setup --reregister`.
+- **Paper arrives on your phone too** — pick the Kindle (not a reading
+  app) in `ft2k setup`, or `ft2k config --set KINDLE_DEVICE_SERIAL=…`
+  with a serial from `ft2k devices`.
+- **Nothing ran** — `ft2k status` shows whether the schedule is
+  installed; `ft2k install` re-installs it (do this after upgrading).
+- **macOS asks for Keychain access** the first time cookies are read
+  from Chrome-based browsers — click *Always Allow* so the morning run
+  doesn't wait on a prompt.
 
-All under `~/.config/ft-to-kindle/`, all `chmod 600`:
+## Why it works this way
 
-- `env` — myFT feed URL (personal ID), Kindle serial, optional SMTP app
-  password
-- `ft-cookies.txt` — FT login session
-- `stk-client.json` — Amazon Send to Kindle OAuth tokens
+Each of these was a real failure in production. Don't undo them without
+re-testing:
 
-## Notes
+1. **It runs on your machine, not in the cloud.** FT's bot protection
+   returns HTTP 403 for article pages fetched from datacenter IPs (GitHub
+   Actions, Railway, …) regardless of login. An earlier GitHub-Actions
+   version "worked" — it mailed a 37 KB *empty* paper every morning.
+2. **Articles are fetched by an OpenSSL 3.x python.** FT also filters
+   on TLS fingerprint: calibre's bundled OpenSSL, macOS LibreSSL and curl
+   get 403; OpenSSL 3.x is served normally. Per-article fetches go
+   through `ft_fetch.py`, which also keeps session cookies across calls —
+   cookie-less request bursts get blocked.
+3. **A sleep inhibitor wraps the run** (`caffeinate -is` /
+   `systemd-inhibit`). A 07:00 slot usually fires during a ~1-minute
+   DarkWake; without an assertion the machine re-sleeps mid-run and TLS
+   handshakes time out. Hourly retries cover a slot that still misses.
+4. **Delivery is HTTPS (Send to Kindle), not SMTP.** Some
+   corporate/managed networks block outbound SMTP. An SMTP fallback via
+   `calibre-smtp` remains for machines where Amazon isn't connected
+   (`ft2k config --set SMTP_USER=…` etc.).
+5. **Registration uses a unique per-machine device serial.** Stock
+   `stkclient` hardcodes one serial for every install worldwide, so any
+   other user's registration invalidates yours within hours (upstream
+   [PR #199](https://github.com/maxdjohnson/stkclient/pull/199), closed
+   unmerged). ft2k derives the serial from your user@host.
 
-- `recipes/myft.recipe` is calibre's upstream Financial Times recipe with
-  the feed swapped for myFT and fetching routed through `ft_fetch.py`. If
-  FT changes their markup, refresh the extraction parts from
-  [upstream](https://raw.githubusercontent.com/kovidgoyal/calibre/master/recipes/financial_times.recipe).
-- `recipes/financial_times.recipe` is the stock section-based full paper,
-  kept in case you want a second edition.
-- Not affiliated with the Financial Times or Amazon.
+## Files
+
+All private data lives in `~/.config/ft-to-kindle/` (mode 0600):
+`env` (settings: feed URL, Kindle serial), `ft-cookies.txt` (your ft.com
+session), `stk-client.json` (Amazon tokens). Run state is in
+`~/.local/state/ft-to-kindle/`; the log is there on Linux and in
+`~/Library/Logs/ft-to-kindle.log` on macOS.
+
+## Development
+
+```sh
+git clone https://github.com/eturan/ft-to-kindle && cd ft-to-kindle
+uv venv && uv pip install -e .
+.venv/bin/ft2k doctor
+```
+
+`src/ft2k/recipes/myft.recipe` is calibre's upstream Financial Times
+recipe with the feed swapped for myFT and fetching routed through
+`ft_fetch.py`. If FT changes their markup, refresh the extraction parts
+from [upstream](https://raw.githubusercontent.com/kovidgoyal/calibre/master/recipes/financial_times.recipe).
+
+Not affiliated with the Financial Times or Amazon.
 
 ## License
 
 GPL-3.0 (see `LICENSE`). The recipes derive from
 [calibre](https://github.com/kovidgoyal/calibre)'s Financial Times recipe
-(GPL-3.0, © Kovid Goyal and contributors);
-`recipes/stk_send.py` adapts one function from
-[stkclient](https://github.com/maxdjohnson/stkclient) (MIT, © Max
+(GPL-3.0, © Kovid Goyal and contributors); `stk.py` adapts one function
+from [stkclient](https://github.com/maxdjohnson/stkclient) (MIT, © Max
 Johnson).

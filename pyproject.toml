@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ft-to-kindle"
+version = "1.0.0"
+description = "Daily delivery of your personal myFT feed to your Kindle, run from your own computer"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.10"
+authors = [{ name = "Emre Turan" }]
+keywords = ["kindle", "financial-times", "myft", "calibre", "epub"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "stkclient>=0.1.1,<0.2",
+    "browser-cookie3>=0.19",
+]
+
+[project.urls]
+Homepage = "https://github.com/eturan/ft-to-kindle"
+Issues = "https://github.com/eturan/ft-to-kindle/issues"
+
+[project.scripts]
+ft2k = "ft2k.cli:main"
+ft-to-kindle = "ft2k.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ft2k"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ft2k", "README.md", "LICENSE", "pyproject.toml"]

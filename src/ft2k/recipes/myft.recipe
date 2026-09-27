@@ -95,8 +95,7 @@ class ft(BasicNewsRecipe):
         # OpenSSL 3.x interpreter is served normally. And a burst of
         # cookie-less requests gets blocked, so ft_fetch.py keeps a session
         # (cookies via FT_COOKIE_FILE) across the per-article subprocess calls.
-        # Set FT_FETCH_PYTHON to a python with OpenSSL 3.x (on Linux the
-        # system python3 already qualifies).
+        # ft2k sets FT_FETCH_PYTHON to a python with OpenSSL 3.x.
         import os.path
         import subprocess
         import tempfile
@@ -106,10 +105,10 @@ class ft(BasicNewsRecipe):
         py = os.environ.get('FT_FETCH_PYTHON', 'python3')
         helper = os.environ.get('FT_FETCH_HELPER')
         if not helper:
-            for cand in ('recipes/ft_fetch.py', 'ft_fetch.py'):
-                if os.path.exists(cand):
-                    helper = os.path.abspath(cand)
-                    break
+            # packaged next to this recipe (src/ft2k/ft_fetch.py)
+            cand = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'ft_fetch.py')
+            if os.path.exists(cand):
+                helper = os.path.abspath(cand)
         if not helper or not os.path.exists(helper):
             raise SystemExit('ft_fetch.py helper not found; set FT_FETCH_HELPER')
         env = dict(os.environ)

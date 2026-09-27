@@ -2,3 +2,6 @@
 ft-cookies.txt
 *cookies*.txt
 __pycache__/
+dist/
+*.egg-info/
+.venv/
